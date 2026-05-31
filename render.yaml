@@ -1,0 +1,22 @@
+{
+  "name": "dignets",
+  "version": "1.0.0",
+  "description": "DigNets social messenger MVP: Telegram-style chats plus Instagram-style media feed.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "social",
+    "messenger",
+    "startup",
+    "telegram",
+    "instagram"
+  ],
+  "author": "DigNets",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

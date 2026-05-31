@@ -1,0 +1,17 @@
+{
+  "name": "DigNets",
+  "short_name": "DigNets",
+  "description": "Realtime social messenger with chat, stories, calls and creator feed.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070908",
+  "theme_color": "#070908",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

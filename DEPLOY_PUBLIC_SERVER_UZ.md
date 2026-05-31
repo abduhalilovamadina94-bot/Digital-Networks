@@ -1,0 +1,4 @@
+PORT=5177
+PUBLIC_URL=https://your-dignets-domain.example
+TELEGRAM_BOT_TOKEN=
+INSTAGRAM_ACCESS_TOKEN=

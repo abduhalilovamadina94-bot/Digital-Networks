@@ -1,0 +1,469 @@
+const app = document.querySelector("#app");
+
+const nav = [
+  ["home", "Home", "H"],
+  ["search", "Search", "S"],
+  ["reels", "Explore", "E"],
+  ["messages", "Message", "M"],
+  ["profile", "Profile", "P"]
+];
+
+const state = {
+  me: null,
+  users: [],
+  posts: [],
+  chats: [],
+  communities: [],
+  notifications: [],
+  calls: [],
+  active: "home",
+  activeChatId: "",
+  query: ""
+};
+
+const api = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Server xatosi.");
+  return data;
+};
+
+const postJson = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const qs = (selector, root = document) => root.querySelector(selector);
+const qsa = (selector, root = document) => [...root.querySelectorAll(selector)];
+const initials = (name = "DN") => name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+const relative = (value) => {
+  const minutes = Math.round((value - Date.now()) / 60000);
+  if (Math.abs(minutes) < 60) return new Intl.RelativeTimeFormat("uz", { numeric: "auto" }).format(minutes, "minute");
+  return new Intl.RelativeTimeFormat("uz", { numeric: "auto" }).format(Math.round(minutes / 60), "hour");
+};
+
+function notify(text) {
+  const node = document.createElement("div");
+  node.className = "toast";
+  node.textContent = text;
+  document.body.append(node);
+  setTimeout(() => node.remove(), 2400);
+}
+
+function logo(size = "normal") {
+  return `<img class="dn-logo ${size}" src="/logo.svg" alt="DigNets">`;
+}
+
+async function boot() {
+  const me = await api("/api/me");
+  state.me = me.user;
+  if (!state.me) return renderAuth();
+  await loadAll();
+  renderShell();
+  connectRealtime();
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+async function loadAll() {
+  const data = await api(`/api/bootstrap?q=${encodeURIComponent(state.query)}`);
+  Object.assign(state, data);
+  if (!state.activeChatId && state.chats[0]) state.activeChatId = state.chats[0].id;
+}
+
+function renderAuth() {
+  app.innerHTML = `
+    <main class="auth-page">
+      <section class="phone-frame auth-phone">
+        <div class="signal">9:41 <span>5G 100%</span></div>
+        <div class="auth-visual">
+          ${logo("hero")}
+          <div>
+            <h1>DigNets</h1>
+            <p>Secure social messenger for chat, stories, creators and teams.</p>
+          </div>
+        </div>
+        <form class="auth-card" id="authForm">
+          <div class="segmented">
+            <button type="button" class="active" data-mode="login">Sign in</button>
+            <button type="button" data-mode="signup">Sign up</button>
+          </div>
+          <input class="field signup-only hidden" name="name" placeholder="Full name">
+          <input class="field signup-only hidden" name="email" type="email" placeholder="Email">
+          <input class="field signup-only hidden" name="phone" placeholder="Phone number">
+          <input class="field signup-only hidden" name="username" placeholder="Username">
+          <input class="field login-only" name="handle" placeholder="Username / email / phone" value="madina">
+          <input class="field" name="password" type="password" placeholder="Password" value="demo12345">
+          <button class="primary wide">Continue</button>
+          <p class="tiny">Demo login: madina / demo12345. Public serverga deploy qilinganda boshqa odamlar internet orqali xabar yuboradi.</p>
+        </form>
+      </section>
+    </main>
+  `;
+  let mode = "login";
+  qsa("[data-mode]").forEach((button) => {
+    button.onclick = () => {
+      mode = button.dataset.mode;
+      qsa("[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
+      qsa(".signup-only").forEach((item) => item.classList.toggle("hidden", mode !== "signup"));
+      qs(".login-only").classList.toggle("hidden", mode !== "login");
+    };
+  });
+  qs("#authForm").onsubmit = async (event) => {
+    event.preventDefault();
+    try {
+      const data = Object.fromEntries(new FormData(event.currentTarget));
+      const result = await api(mode === "signup" ? "/api/signup" : "/api/login", postJson(data));
+      state.me = result.user;
+      await loadAll();
+      renderShell();
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+}
+
+function renderShell() {
+  app.innerHTML = `
+    <main class="desktop-shell">
+      <aside class="left-panel">
+        <div class="brand">${logo()}<div><b>DigNets</b><span>@${state.me.username}</span></div></div>
+        <button class="new-post" data-action="new-post">New Post</button>
+        <nav class="side-nav">
+          ${nav.map(([id, label, icon]) => `<button data-nav="${id}" class="${state.active === id ? "active" : ""}"><b>${icon}</b><span>${label}</span></button>`).join("")}
+          <button data-nav="contacts" class="${state.active === "contacts" ? "active" : ""}"><b>C</b><span>Contacts</span></button>
+          <button data-nav="calls" class="${state.active === "calls" ? "active" : ""}"><b>V</b><span>Calls</span></button>
+          <button data-nav="settings" class="${state.active === "settings" ? "active" : ""}"><b>G</b><span>Settings</span></button>
+        </nav>
+      </aside>
+      <section class="content">
+        <header class="topbar">
+          <label class="search-box"><span>Search</span><input id="globalSearch" value="${state.query}" placeholder="People, groups, hashtags"></label>
+          <button class="ghost" data-nav="notifications">Notifications <b>${state.notifications.filter((n) => !n.read).length}</b></button>
+          <button class="ghost" id="logout">Log out</button>
+        </header>
+        <section id="screen" class="screen"></section>
+      </section>
+      <aside class="right-panel">${rightPanel()}</aside>
+      <nav class="mobile-tabs">
+        ${nav.map(([id, label, icon]) => `<button data-nav="${id}" class="${state.active === id ? "active" : ""}"><b>${icon}</b><span>${label}</span></button>`).join("")}
+      </nav>
+    </main>
+  `;
+  wireShell();
+  renderScreen();
+}
+
+function wireShell() {
+  qsa("[data-nav]").forEach((button) => {
+    button.onclick = () => {
+      state.active = button.dataset.nav;
+      renderShell();
+    };
+  });
+  qs("#logout").onclick = async () => {
+    await api("/api/logout", { method: "POST" });
+    state.me = null;
+    renderAuth();
+  };
+  qs("#globalSearch").oninput = async (event) => {
+    state.query = event.target.value;
+    await loadAll();
+    renderShell();
+  };
+  qsa("[data-action='new-post']").forEach((button) => button.onclick = () => {
+    state.active = "create";
+    renderShell();
+  });
+}
+
+function renderScreen() {
+  const screen = qs("#screen");
+  const views = {
+    home: homeView,
+    search: searchView,
+    reels: reelsView,
+    messages: messagesView,
+    profile: profileView,
+    contacts: contactsView,
+    calls: callsView,
+    settings: settingsView,
+    notifications: notificationsView,
+    create: createView
+  };
+  screen.innerHTML = (views[state.active] || homeView)();
+  wireScreen();
+}
+
+function homeView() {
+  return `
+    <section class="welcome-card">
+      <div>
+        <p>Hi, WelcomeBack</p>
+        <h2>${state.me.name}</h2>
+        <div class="quick-stats"><span>${state.posts.length} posts</span><span>${state.chats.length} chats</span><span>${state.communities.length} groups</span></div>
+      </div>
+      ${logo("card")}
+    </section>
+    ${stories()}
+    <section class="feed-grid">${state.posts.map(postCard).join("")}</section>
+  `;
+}
+
+function stories() {
+  return `<section class="story-strip">
+    <button class="story-add" data-nav="create"><b>+</b><span>Your story</span></button>
+    ${state.users.map((user) => `<article class="story"><div class="avatar">${initials(user.name)}</div><span>${user.username}</span></article>`).join("")}
+  </section>`;
+}
+
+function postCard(post) {
+  return `<article class="post-card" data-post="${post.id}">
+    <header><div class="avatar">${initials(post.user?.name)}</div><div><b>${post.user?.name || "User"}</b><span>@${post.user?.username} · ${relative(post.createdAt)}</span></div><button>...</button></header>
+    <div class="media ${post.mediaType}">${media(post)}</div>
+    <footer>
+      <div class="post-actions">
+        <button data-like="${post.id}">Like ${post.likes?.length || 0}</button>
+        <button data-save="${post.id}">Save ${post.saves?.length || 0}</button>
+        <button>Score ${post.score || 0}</button>
+      </div>
+      <p><b>@${post.user?.username}</b> ${post.caption}</p>
+      <div class="comments">${(post.comments || []).slice(-2).map((comment) => `<span><b>${comment.user?.username}</b> ${comment.text}</span>`).join("")}</div>
+      <form class="inline-form" data-comment="${post.id}"><input name="text" placeholder="Add comment"><button>Send</button></form>
+    </footer>
+  </article>`;
+}
+
+function media(post) {
+  if (post.mediaType === "image") return `<img src="${post.mediaUrl}" alt="post">`;
+  if (post.mediaType === "video") return `<video src="${post.mediaUrl}" controls playsinline></video>`;
+  if (post.mediaType === "reel") return `<div class="reel-card"><span>Reels</span><b>Creator story</b><small>Swipe style video card</small></div>`;
+  if (post.mediaType === "code") return `<div class="code-card"><b>API</b><span>Realtime / REST / Deploy</span></div>`;
+  return `<div class="spotlight-card">${logo("mark")}<b>DigNets Spotlight</b><span>AI powered social messenger</span></div>`;
+}
+
+function searchView() {
+  return `<section class="panel-block"><h2>Search</h2><p>Top search, people, groups and recent openings.</p></section>
+  <section class="chips">${["NFT Challenge", "Digital Art", "People around me", "Creative", "Photography", "Startup"].map((item) => `<button>${item}</button>`).join("")}</section>
+  <section class="people-list">${state.users.map(userRow).join("")}</section>
+  <section class="feed-grid compact">${state.posts.map(postCard).join("")}</section>`;
+}
+
+function reelsView() {
+  return `<section class="reels-layout">${state.posts.map((post) => `<article class="reel-screen">${media({ ...post, mediaType: post.mediaType === "image" ? "image" : "reel" })}<div class="reel-overlay"><b>@${post.user?.username}</b><p>${post.caption}</p><button data-like="${post.id}">Like ${post.likes?.length || 0}</button><button data-save="${post.id}">Save</button></div></article>`).join("")}</section>`;
+}
+
+function messagesView() {
+  const active = state.chats.find((chat) => chat.id === state.activeChatId) || state.chats[0];
+  return `<section class="messages-layout">
+    <aside class="chat-index">
+      <div class="chat-tabs"><button>Stranger chats</button><button>Contact chats</button><button>Comment chats</button></div>
+      ${state.chats.map((chat) => chatRow(chat, active?.id)).join("")}
+      <button class="primary wide" data-action="group">Create group</button>
+    </aside>
+    <section class="conversation">
+      ${active ? conversation(active) : `<div class="empty-state">${logo("card")}<h2>No messages yet</h2><p>Start a chat with contacts.</p></div>`}
+    </section>
+  </section>`;
+}
+
+function chatRow(chat, activeId) {
+  const other = chat.type === "direct" ? chat.members.find((user) => user.id !== state.me.id) || chat.members[0] : null;
+  const title = chat.type === "direct" ? other.name : chat.title;
+  return `<button class="chat-row ${chat.id === activeId ? "active" : ""}" data-chat="${chat.id}">
+    <div class="avatar">${initials(title)}</div>
+    <div><b>${title}</b><span>${chat.lastMessage?.text || "No messages yet"}</span></div>
+    <small>${chat.pinned ? "PIN" : relative(chat.updatedAt)}</small>
+  </button>`;
+}
+
+function conversation(chat) {
+  const title = chat.type === "direct" ? (chat.members.find((user) => user.id !== state.me.id) || chat.members[0]).name : chat.title;
+  return `<header class="chat-head"><button data-nav="messages">Back</button><div><b>${title}</b><span>${chat.members.length} members · online</span></div><button data-call="${chat.id}">Call</button></header>
+  <div class="message-list">${chat.messages.map((message) => `<div class="bubble ${message.userId === state.me.id ? "me" : ""}"><span>${message.text}</span><small>${relative(message.createdAt)}</small></div>`).join("")}</div>
+  <form class="message-form" data-chat-send="${chat.id}"><button type="button">+</button><input name="text" placeholder="Write a message"><button>Send</button></form>`;
+}
+
+function contactsView() {
+  return `<section class="panel-block"><h2>Contacts</h2><p>Start direct chat with any user.</p></section><section class="people-list">${state.users.filter((user) => user.id !== state.me.id).map((user) => `${userRow(user)}<button class="primary small" data-to="${user.id}">Message</button>`).join("")}</section>`;
+}
+
+function userRow(user) {
+  return `<article class="person"><div class="avatar">${initials(user.name)}</div><div><b>${user.name}</b><span>@${user.username} · ${user.bio || ""}</span></div></article>`;
+}
+
+function callsView() {
+  return `<section class="panel-block"><h2>Voice and video calls</h2><p>Demo signaling UI. Production video needs WebRTC TURN server.</p><button class="primary" data-action="call">Start call</button></section>
+  <section class="call-grid">${state.calls.map((call) => `<article class="call-card"><div class="call-visual ${call.type}">${call.type === "video" ? "VIDEO" : "VOICE"}</div><b>${call.title}</b><span>${call.members.length} members · ${call.active ? "active" : "ended"}</span><button>Join</button></article>`).join("")}</section>`;
+}
+
+function notificationsView() {
+  return `<section class="panel-block"><h2>Notifications</h2><p>Messages, community activity and system updates.</p><button class="primary" data-action="read">Mark read</button></section>
+  <section class="notify-list">${state.notifications.map((item) => `<article class="${item.read ? "" : "unread"}"><b>${item.title}</b><p>${item.text}</p><span>${relative(item.createdAt)}</span></article>`).join("")}</section>`;
+}
+
+function profileView() {
+  return `<section class="profile-hero">
+    ${logo("card")}<div><h2>${state.me.name}</h2><p>@${state.me.username}</p><span>${state.me.bio}</span></div>
+    <div class="profile-actions"><button>Follow</button><button>Favorite</button><button data-nav="settings">Settings</button></div>
+  </section>
+  <section class="stats-row"><div><b>${state.posts.filter((p) => p.userId === state.me.id).length}</b><span>posts</span></div><div><b>${state.me.followers?.length || 0}</b><span>followers</span></div><div><b>${state.me.following?.length || 0}</b><span>following</span></div></section>
+  <section class="feed-grid compact">${state.posts.filter((p) => p.userId === state.me.id).map(postCard).join("") || `<div class="empty-state">No posts yet</div>`}</section>`;
+}
+
+function settingsView() {
+  return `<section class="settings-grid">
+    <form class="panel-block" id="profileForm"><h2>Edit profile</h2><input class="field" name="name" value="${state.me.name}"><input class="field" name="phone" value="${state.me.phone || ""}" placeholder="Phone"><input class="field" name="location" value="${state.me.location || ""}"><textarea class="field" name="bio">${state.me.bio || ""}</textarea><button class="primary">Save</button></form>
+    <section class="panel-block"><h2>Chat settings</h2>${settingToggle("notifications", "Notifications", state.me.settings?.notifications)}${settingToggle("readReceipts", "Read receipts", state.me.settings?.readReceipts)}${settingToggle("compactMode", "Compact mode", state.me.settings?.compactMode)}</section>
+    <section class="panel-block"><h2>QR code scanner</h2><div class="qr"><span></span><span></span><span></span><span></span></div><p>Public server URL bilan QR login ishlatish mumkin.</p></section>
+  </section>`;
+}
+
+function settingToggle(key, label, checked) {
+  return `<label class="toggle"><span>${label}</span><input type="checkbox" data-setting="${key}" ${checked ? "checked" : ""}></label>`;
+}
+
+function createView() {
+  return `<form class="create-card" id="postForm">
+    <h2>Create post</h2>
+    <textarea class="field" name="caption" placeholder="Write something... #dignets"></textarea>
+    <input class="field" name="media" type="file" accept="image/*,video/*">
+    <div class="create-tools"><button type="button">Photo</button><button type="button">Voice</button><button type="button">Hashtag</button></div>
+    <button class="primary wide">Publish</button>
+  </form>`;
+}
+
+function rightPanel() {
+  return `<section class="mini-profile">${logo("card")}<h3>${state.me.name}</h3><p>@${state.me.username}</p><div><span>${state.me.followers?.length || 0} followers</span><span>${state.me.following?.length || 0} following</span></div></section>
+  <section class="mini-card"><h3>Communities</h3>${state.communities.map((com) => `<article><b>${com.name}</b><span>${com.members.length} members</span></article>`).join("")}</section>
+  <section class="mini-card"><h3>API status</h3><article><b>Realtime</b><span>Server-Sent Events connected</span></article><article><b>Deploy</b><span>Ready for Render/Railway</span></article></section>`;
+}
+
+function wireScreen() {
+  qsa("[data-chat]").forEach((button) => button.onclick = () => {
+    state.activeChatId = button.dataset.chat;
+    renderScreen();
+  });
+  qsa("[data-like]").forEach((button) => button.onclick = () => postAction(button.dataset.like, "like"));
+  qsa("[data-save]").forEach((button) => button.onclick = () => postAction(button.dataset.save, "save"));
+  qsa("[data-comment]").forEach((form) => form.onsubmit = (event) => submitComment(event, form.dataset.comment));
+  qsa("[data-chat-send]").forEach((form) => form.onsubmit = submitMessage);
+  qsa("[data-to]").forEach((button) => button.onclick = () => startMessage(button.dataset.to));
+  qsa("[data-action='group']").forEach((button) => button.onclick = createGroup);
+  qsa("[data-action='call']").forEach((button) => button.onclick = startCall);
+  qsa("[data-action='read']").forEach((button) => button.onclick = markRead);
+  qsa("[data-setting]").forEach((input) => input.onchange = () => saveSetting(input.dataset.setting, input.checked));
+  const postForm = qs("#postForm");
+  if (postForm) postForm.onsubmit = submitPost;
+  const profileForm = qs("#profileForm");
+  if (profileForm) profileForm.onsubmit = submitProfile;
+}
+
+async function submitPost(event) {
+  event.preventDefault();
+  const result = await fetch("/api/post", { method: "POST", body: new FormData(event.currentTarget) });
+  if (!result.ok) return notify("Post yuklanmadi.");
+  await loadAll();
+  state.active = "home";
+  renderShell();
+}
+
+async function postAction(id, action) {
+  const result = await api(`/api/post/${id}/${action}`, { method: "POST" });
+  upsertPost(result.post);
+  renderShell();
+}
+
+async function submitComment(event, id) {
+  event.preventDefault();
+  const text = new FormData(event.currentTarget).get("text");
+  if (!text) return;
+  const result = await api(`/api/post/${id}/comment`, postJson({ text }));
+  upsertPost(result.post);
+  renderShell();
+}
+
+async function submitMessage(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const text = new FormData(form).get("text");
+  if (!text) return;
+  const result = await api("/api/message", postJson({ chatId: form.dataset.chatSend, text }));
+  upsertChat(result.chat);
+  state.activeChatId = result.chat.id;
+  renderShell();
+}
+
+async function startMessage(userId) {
+  const result = await api("/api/message", postJson({ to: userId, text: "Salom! DigNets orqali yozdim." }));
+  upsertChat(result.chat);
+  state.active = "messages";
+  state.activeChatId = result.chat.id;
+  renderShell();
+}
+
+async function createGroup() {
+  const ids = state.users.filter((user) => user.id !== state.me.id).slice(0, 3).map((user) => user.id);
+  const result = await api("/api/chat", postJson({ type: "group", title: "New DigNets Team", members: ids }));
+  upsertChat(result.chat);
+  state.activeChatId = result.chat.id;
+  renderShell();
+}
+
+async function startCall() {
+  const result = await api("/api/call", postJson({ title: "DigNets Call", type: "voice", members: state.users.filter((user) => user.id !== state.me.id).slice(0, 2).map((user) => user.id) }));
+  state.calls.unshift(result.call);
+  notify("Call room created.");
+  renderShell();
+}
+
+async function markRead() {
+  await api("/api/notifications/read", { method: "POST" });
+  state.notifications = state.notifications.map((item) => ({ ...item, read: true }));
+  renderShell();
+}
+
+async function saveSetting(key, value) {
+  const result = await api("/api/settings", postJson({ [key]: value }));
+  state.me = result.user;
+  notify("Settings saved.");
+}
+
+async function submitProfile(event) {
+  event.preventDefault();
+  const result = await api("/api/profile", postJson(Object.fromEntries(new FormData(event.currentTarget))));
+  state.me = result.user;
+  notify("Profile saved.");
+  renderShell();
+}
+
+function upsertPost(post) {
+  const index = state.posts.findIndex((item) => item.id === post.id);
+  if (index >= 0) state.posts[index] = post;
+  else state.posts.unshift(post);
+}
+
+function upsertChat(chat) {
+  const index = state.chats.findIndex((item) => item.id === chat.id);
+  if (index >= 0) state.chats[index] = chat;
+  else state.chats.unshift(chat);
+}
+
+function connectRealtime() {
+  if (state.source) state.source.close();
+  state.source = new EventSource("/api/events");
+  state.source.addEventListener("feed", (event) => {
+    upsertPost(JSON.parse(event.data));
+    if (state.active === "home" || state.active === "reels") renderShell();
+  });
+  state.source.addEventListener("feed:update", (event) => {
+    upsertPost(JSON.parse(event.data));
+    renderShell();
+  });
+  state.source.addEventListener("message", (event) => {
+    const { chat } = JSON.parse(event.data);
+    upsertChat(chat);
+    if (state.active === "messages") renderShell();
+  });
+  state.source.addEventListener("call", (event) => {
+    state.calls.unshift(JSON.parse(event.data));
+    notify("Incoming call.");
+  });
+}
+
+boot().catch(() => renderAuth());
