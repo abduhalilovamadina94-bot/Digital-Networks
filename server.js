@@ -32,7 +32,7 @@ password: demo12345
 - Likes, saves and comments.
 - Local JSON database for demo use.
 - PWA manifest and service worker.
-- Deploy files for Render and Docker.
+- Deploy config for Render Node hosting.
 
 ## Public internet messaging
 
@@ -52,3 +52,7 @@ DEPLOY_PUBLIC_SERVER_UZ.md
 - Add WebRTC TURN server for real audio/video calls.
 - Add official Telegram Bot API / Mini App integration.
 - Add official Instagram Graph API integration after Meta app review.
+
+## Render note
+
+Do not create a `Dockerfile` in the repository unless you intentionally deploy with Docker. This project is configured as a Render Node service through `render.yaml`.
